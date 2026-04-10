@@ -1,26 +1,35 @@
 import cv2
 import pyautogui
 import numpy as np
+import time
 
 cap = cv2.VideoCapture(0)
 
 screen_w, screen_h = pyautogui.size()
 
+last_click_time = 0
+freeze_cursor = False
+
 while True:
     ret, frame = cap.read()
+    if not ret:
+        break
+
     frame = cv2.flip(frame, 1)
 
     # Convert to HSV
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
 
-    # Skin color range
-    lower = np.array([0, 20, 70])
-    upper = np.array([20, 255, 255])
+    # Improved skin detection range
+    lower = np.array([0, 30, 60])
+    upper = np.array([20, 150, 255])
 
     mask = cv2.inRange(hsv, lower, upper)
 
-    # Noise removal
+    # Noise removal (IMPORTANT)
     mask = cv2.GaussianBlur(mask, (5, 5), 0)
+    mask = cv2.erode(mask, None, iterations=2)
+    mask = cv2.dilate(mask, None, iterations=2)
 
     # Find contours
     contours, _ = cv2.findContours(mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
@@ -28,28 +37,83 @@ while True:
     if contours:
         max_contour = max(contours, key=cv2.contourArea)
 
-        # Get bounding box
-        x, y, w, h = cv2.boundingRect(max_contour)
+        # Only detect large hand
+        if cv2.contourArea(max_contour) > 5000:
 
-        cx = x + w // 2
-        cy = y + h // 2
+            x, y, w, h = cv2.boundingRect(max_contour)
 
-        # Draw
-        cv2.circle(frame, (cx, cy), 10, (0, 255, 0), -1)
+            cx = x + w // 2
+            cy = y + h // 2
 
-        # Move cursor
-        screen_x = int(cx * screen_w / frame.shape[1])
-        screen_y = int(cy * screen_h / frame.shape[0])
+            # Draw tracking point
+            cv2.circle(frame, (cx, cy), 10, (0, 255, 0), -1)
+            cv2.rectangle(frame, (x, y), (x + w, y + h), (255, 0, 0), 2)
 
-        pyautogui.moveTo(screen_x, screen_y)
+            # =========================
+            # 1. Cursor Movement
+            # =========================
+            if not freeze_cursor:
+                screen_x = int(cx * screen_w / frame.shape[1])
+                screen_y = int(cy * screen_h / frame.shape[0])
+                pyautogui.moveTo(screen_x, screen_y, duration=0.1)
 
-        # Click (simple area condition)
-        if w * h < 20000:
-            pyautogui.click()
-            cv2.putText(frame, "Click", (50, 50),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+            # =========================
+            # 2. Click (small hand area)
+            # =========================
+            area = w * h
+            if area < 20000 and time.time() - last_click_time > 1:
+                pyautogui.click()
+                cv2.putText(frame, "Click", (50, 50),
+                            cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+                last_click_time = time.time()
 
-    cv2.imshow("Hand Mouse (No MediaPipe)", frame)
+            # =========================
+            # 3. Scroll
+            # =========================
+            if cy < 150:
+                pyautogui.scroll(50)
+                cv2.putText(frame, "Scroll Up", (50, 100),
+                            cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
+
+            elif cy > 350:
+                pyautogui.scroll(-50)
+                cv2.putText(frame, "Scroll Down", (50, 100),
+                            cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
+
+            # =========================
+            # 4. Zoom In / Out
+            # =========================
+            if area < 15000:
+                pyautogui.hotkey('ctrl', '+')
+                cv2.putText(frame, "Zoom In", (50, 150),
+                            cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+
+            elif area > 40000:
+                pyautogui.hotkey('ctrl', '-')
+                cv2.putText(frame, "Zoom Out", (50, 150),
+                            cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+
+            # =========================
+            # 5. Screenshot
+            # =========================
+            if 250 < cy < 300:
+                filename = f"screenshot_{int(time.time())}.png"
+                pyautogui.screenshot().save(filename)
+                cv2.putText(frame, "Screenshot Saved", (50, 200),
+                            cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 0), 2)
+                time.sleep(1)
+
+            # =========================
+            # 6. Cursor Freeze
+            # =========================
+            if area > 60000:
+                freeze_cursor = True
+                cv2.putText(frame, "Cursor Frozen", (50, 250),
+                            cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+            else:
+                freeze_cursor = False
+
+    cv2.imshow("Hand Gesture Control (No MediaPipe)", frame)
 
     if cv2.waitKey(1) == ord('q'):
         break
